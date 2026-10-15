@@ -16,7 +16,11 @@ another click brings the original back.
   `translate="no"`, `.notranslate`, and text that is already Russian, numbers or URLs.
 - Content added later (infinite scroll, SPA navigation) is translated automatically
   while the page is in translated mode.
-- Visible text is translated first; batches are sent in parallel (configurable).
+- Text on screen is translated first, in small batches, so you can start reading within
+  seconds; the page's main text goes before menus. The queue follows scrolling: whatever is
+  on screen now is translated next. Off-screen text goes in larger batches to save requests.
+- Gemini "thinking" is turned off (or set to the minimum) for translation, and rate-limit
+  responses (HTTP 429) are retried after the delay the API asks for.
 
 ## Install (unpacked)
 

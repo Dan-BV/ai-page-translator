@@ -5,10 +5,11 @@
 const ANTHROPIC_VERSION = '2023-06-01';
 
 export class ApiError extends Error {
-  constructor(message, status, retryable = false) {
+  constructor(message, status, retryable = false, retryAfterMs = 0) {
     super(message);
     this.status = status;
     this.retryable = retryable;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -53,17 +54,40 @@ export function alignResult(units, parsed) {
 
 async function readError(res) {
   let detail = '';
+  let retryAfterMs = 0;
   try {
     const body = await res.json();
     detail = body?.error?.message || JSON.stringify(body);
+    // Gemini: error.details[].retryDelay = "33s"
+    const info = (body?.error?.details || []).find(d => d.retryDelay);
+    if (info) retryAfterMs = parseFloat(info.retryDelay) * 1000 || 0;
   } catch {
     detail = res.statusText;
   }
-  const retryable = res.status === 429 || res.status === 408 || res.status >= 500;
-  return new ApiError(`HTTP ${res.status}: ${detail}`, res.status, retryable);
+  // Anthropic and others: Retry-After header in seconds.
+  const header = parseFloat(res.headers?.get?.('retry-after'));
+  if (!retryAfterMs && header > 0) retryAfterMs = header * 1000;
+  const retryable = res.status === 429 || res.status === 408 || res.status === 529 || res.status >= 500;
+  return new ApiError(`HTTP ${res.status}: ${detail}`, res.status, retryable, retryAfterMs);
+}
+
+// Translation needs no reasoning: turn "thinking" off (or to the minimum the model
+// allows), otherwise every response waits for a long thinking phase.
+const noThinkingSupport = new Set();
+function geminiThinkingConfig(model) {
+  if (noThinkingSupport.has(model)) return null;
+  const m = /^gemini-(\d+)(?:\.(\d+))?/.exec(model);
+  if (!m) return null;
+  if (Number(m[1]) >= 3) return { thinkingLevel: /flash/.test(model) ? 'minimal' : 'low' };
+  if (/flash/.test(model)) return { thinkingBudget: 0 };
+  if (/pro/.test(model)) return { thinkingBudget: 128 };
+  return null;
 }
 
 async function callGemini({ key, model, lang, units }) {
+  const thinkingConfig = geminiThinkingConfig(model);
+  const generationConfig = { responseMimeType: 'application/json', temperature: 0.2 };
+  if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
@@ -71,10 +95,18 @@ async function callGemini({ key, model, lang, units }) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt(lang) }] },
       contents: [{ role: 'user', parts: [{ text: JSON.stringify(units) }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.2 }
+      generationConfig
     })
   });
-  if (!res.ok) throw await readError(res);
+  if (!res.ok) {
+    const err = await readError(res);
+    // The model rejected the thinking settings: remember and retry without them.
+    if (thinkingConfig && err.status === 400 && /thinking/i.test(err.message)) {
+      noThinkingSupport.add(model);
+      return callGemini({ key, model, lang, units });
+    }
+    throw err;
+  }
   const data = await res.json();
   const cand = data.candidates?.[0];
   if (!cand) {
@@ -114,7 +146,7 @@ const CALLERS = { gemini: callGemini, claude: callClaude };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // One request with retries on rate limits / transient errors / bad JSON.
-async function requestWithRetry(params, attempts = 4) {
+async function requestWithRetry(params, attempts = 6) {
   const call = CALLERS[params.provider];
   if (!call) throw new Error(`Unknown provider: ${params.provider}`);
   let lastErr;
@@ -126,7 +158,10 @@ async function requestWithRetry(params, attempts = 4) {
       if (err instanceof TruncatedError) throw err;
       const retryable = err instanceof ApiError ? err.retryable : err instanceof SyntaxError || /JSON/.test(err.message);
       if (!retryable || i === attempts - 1) throw err;
-      await sleep(1000 * 2 ** i + Math.random() * 500);
+      const wait = err.retryAfterMs
+        ? Math.min(err.retryAfterMs, 60000) + 250
+        : Math.min(1000 * 2 ** i, 20000) + Math.random() * 500;
+      await sleep(wait);
     }
   }
   throw lastErr;

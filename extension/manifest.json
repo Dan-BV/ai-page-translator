@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AI Page Translator (RU)",
   "short_name": "AI Translator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Translates the whole page into Russian in place, keeping the layout intact. Uses Gemini or Claude with a model of your choice.",
   "icons": {
     "16": "icons/icon16.png",

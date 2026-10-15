@@ -15,8 +15,10 @@
   const BUTTON_INPUT_TYPES = new Set(['button', 'submit', 'reset']);
   const MAX_UNIT_FRAGMENTS = 40;
   const MAX_UNIT_CHARS = 1500;
-  const MAX_BATCH_CHARS = 3000;
-  const MAX_BATCH_UNITS = 60;
+  const MAX_BATCH_CHARS = 4000;
+  const MAX_BATCH_UNITS = 80;
+  const VISIBLE_BATCH_CHARS = 800;
+  const VISIBLE_BATCH_UNITS = 15;
 
   const LETTER_RE = /\p{L}/u;
   const CYRILLIC_RE = /[Ѐ-ӿ]/g;
@@ -210,31 +212,55 @@
   }
 
   // ---------- translation pipeline ----------
-  function inViewport(el) {
-    if (!el || !el.getBoundingClientRect) return false;
+  // 0 for units on screen, otherwise the distance in px from the viewport.
+  // Recomputed on every pick, so scrolling re-prioritises the queue at once.
+  function viewportDistance(u) {
+    const el = u.block;
+    if (!el || !el.getBoundingClientRect) return 0; // document.title
     const r = el.getBoundingClientRect();
-    return r.bottom > 0 && r.top < window.innerHeight * 1.5 && r.width > 0 && r.height > 0;
+    if (r.width === 0 && r.height === 0) return Infinity; // hidden: translate last
+    const h = window.innerHeight;
+    if (r.bottom >= 0 && r.top <= h) {
+      // Collapsed menus and invisible popups still have a box: they are not "on screen".
+      const shown = !el.checkVisibility || el.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+      return shown ? 0 : 1e6;
+    }
+    return r.top > h ? r.top - h : (-r.bottom) * 2; // below the screen goes before above it
   }
 
-  function makeBatches(units) {
-    const visible = [];
-    const rest = [];
-    for (const u of units) (inViewport(u.block) ? visible : rest).push(u);
-    const ordered = visible.concat(rest);
-    const batches = [];
-    let cur = [];
-    let chars = 0;
-    for (const u of ordered) {
-      if (cur.length && (chars + u.chars > MAX_BATCH_CHARS || cur.length >= MAX_BATCH_UNITS)) {
-        batches.push(cur);
-        cur = [];
-        chars = 0;
-      }
-      cur.push(u);
-      chars += u.chars;
+  // Among units at the same distance, the page's main text goes before navigation.
+  const MAIN_SELECTOR = 'main, article, [role="main"], #content, #main, .content, .post, .entry';
+  function contentRank(u) {
+    if (u.rank === undefined) {
+      const el = u.block;
+      const inMain = el && el.closest ? el.closest(MAIN_SELECTOR) !== null : false;
+      u.rank = inMain || u.chars >= 80 ? 0 : 1;
     }
-    if (cur.length) batches.push(cur);
-    return batches;
+    return u.rank;
+  }
+
+  // Takes the next batch from the queue: small for on-screen text so it shows up fast,
+  // large for off-screen text to keep the number of requests low.
+  function takeBatch(queue) {
+    if (!queue.length) return null;
+    const scored = queue.map((u, i) => ({ u, i, d: viewportDistance(u) }));
+    scored.sort((a, b) => a.d - b.d || contentRank(a.u) - contentRank(b.u) || a.u.order - b.u.order);
+    const visible = scored[0].d === 0;
+    const maxChars = visible ? VISIBLE_BATCH_CHARS : MAX_BATCH_CHARS;
+    const maxUnits = visible ? VISIBLE_BATCH_UNITS : MAX_BATCH_UNITS;
+    const batch = [];
+    let chars = 0;
+    for (const s of scored) {
+      if (batch.length && (chars + s.u.chars > maxChars || batch.length >= maxUnits)) break;
+      if (visible && s.d !== 0 && batch.length) break;
+      batch.push(s);
+      chars += s.u.chars;
+    }
+    const taken = new Set(batch.map(s => s.i));
+    const rest = queue.filter((_, i) => !taken.has(i));
+    queue.length = 0;
+    queue.push(...rest);
+    return batch.map(s => s.u);
   }
 
   async function requestTranslation(batch) {
@@ -249,23 +275,25 @@
   }
 
   async function runUnits(units, { onProgress } = {}) {
-    const batches = makeBatches(units);
-    const total = batches.reduce((n, b) => n + b.length, 0);
+    units.forEach((u, i) => { u.order = i; });
+    const queue = units.slice();
+    const total = units.length;
     let done = 0;
     let firstError = null;
+    let stop = false;
     const myRun = runId;
-    let next = 0;
 
     async function worker() {
-      while (next < batches.length && myRun === runId) {
-        const batch = batches[next++];
+      while (!stop && myRun === runId) {
+        const batch = takeBatch(queue);
+        if (!batch) return;
         try {
           const result = await requestTranslation(batch);
           if (myRun !== runId) return;
           batch.forEach((u, i) => applyUnit(u, result[i]));
         } catch (err) {
           firstError = firstError || err;
-          if (err.code === 'NO_KEY') { next = batches.length; return; }
+          if (err.code === 'NO_KEY') { stop = true; return; }
         }
         done += batch.length;
         onProgress?.(done / total);
@@ -273,7 +301,7 @@
     }
 
     const workers = [];
-    const n = Math.max(1, Math.min(config.concurrency || 4, batches.length));
+    const n = Math.max(1, Math.min(config.concurrency || 4, units.length));
     for (let i = 0; i < n; i++) workers.push(worker());
     await Promise.all(workers);
     return { total, error: firstError };
