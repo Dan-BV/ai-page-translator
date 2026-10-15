@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Page Translator</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>AI Page Translator</h1>
+      <p class="muted">Translates the page into Russian in place.</p>
+    </header>
+
+    <button id="translateBtn" class="primary" type="button">Translate this page / show original</button>
+
+    <section>
+      <h2>Provider</h2>
+      <div class="segmented" role="radiogroup">
+        <label><input type="radio" name="provider" value="gemini"> Google Gemini</label>
+        <label><input type="radio" name="provider" value="claude"> Anthropic Claude</label>
+      </div>
+    </section>
+
+    <section data-provider="gemini">
+      <h2>Gemini</h2>
+      <label class="field">API key
+        <span class="row">
+          <input id="geminiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
+          <button type="button" class="reveal" data-for="geminiKey">Show</button>
+        </span>
+      </label>
+      <p class="hint">Get a key in <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</p>
+      <label class="field">Model
+        <span class="row">
+          <select id="geminiModel"></select>
+          <button type="button" class="refresh" data-provider="gemini" title="Load the model list from the API">Refresh</button>
+        </span>
+      </label>
+      <label class="field">Custom model id (optional, overrides the list)
+        <input id="geminiCustom" type="text" spellcheck="false" placeholder="e.g. gemini-2.5-flash">
+      </label>
+    </section>
+
+    <section data-provider="claude">
+      <h2>Claude</h2>
+      <label class="field">API key
+        <span class="row">
+          <input id="claudeKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+          <button type="button" class="reveal" data-for="claudeKey">Show</button>
+        </span>
+      </label>
+      <p class="hint">Get a key in the <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>.</p>
+      <label class="field">Model
+        <span class="row">
+          <select id="claudeModel"></select>
+          <button type="button" class="refresh" data-provider="claude" title="Load the model list from the API">Refresh</button>
+        </span>
+      </label>
+      <label class="field">Custom model id (optional, overrides the list)
+        <input id="claudeCustom" type="text" spellcheck="false" placeholder="e.g. claude-haiku-5-5">
+      </label>
+    </section>
+
+    <section>
+      <h2>Other</h2>
+      <label class="check"><input id="showButton" type="checkbox"> Show the floating button on pages</label>
+      <label class="field">Parallel requests
+        <input id="concurrency" type="number" min="1" max="8" step="1">
+      </label>
+      <button id="testBtn" type="button">Test connection</button>
+    </section>
+
+    <p id="status" class="status" role="status"></p>
+    <p class="muted small">Keys are stored locally in this browser (chrome.storage.local) and sent only to the selected provider. Shortcut: Alt+Shift+T.</p>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Test page title</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; margin: 24px; }
+    nav a { margin-right: 12px; }
+    .card { border: 1px solid #ccc; padding: 12px; width: 300px; display: inline-block; vertical-align: top; }
+  </style>
+  <!-- Fake extension API: "translates" by prefixing each fragment with "RU:". -->
+  <script>
+    window.__sent = [];
+    window.chrome = {
+      runtime: {
+        sendMessage: async msg => {
+          window.__sent.push(msg);
+          await new Promise(r => setTimeout(r, 50));
+          if (msg.type === 'translate') return { ok: true, result: msg.units.map(u => u.map(f => 'RU:' + f)) };
+          return { ok: true };
+        },
+        onMessage: { addListener() {} }
+      },
+      storage: {
+        local: { get: async d => d, set: async () => {} },
+        onChanged: { addListener() {} }
+      }
+    };
+  </script>
+</head>
+<body>
+  <nav><a href="#">Home</a><a href="#">Pricing</a><a href="#">About us</a></nav>
+  <h1 id="h">Welcome to the <b>best</b> product</h1>
+  <p id="p">Click <a href="#">here</a> to continue reading.</p>
+  <div class="card"><h3>Fast</h3><p>Loads in milliseconds.</p></div>
+  <div class="card"><h3>Уже по-русски</h3><p>Этот текст не нужно переводить.</p></div>
+  <input id="inp" placeholder="Search the site" title="Search field">
+  <input id="sub" type="submit" value="Send">
+  <img id="img" alt="Company logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+  <pre id="pre">const greeting = "Hello";</pre>
+  <p>Inline <code id="code">npm install</code> stays.</p>
+  <p class="notranslate" id="nt">Do not translate me</p>
+  <p id="num">12345 — 2026</p>
+  <div id="dyn"></div>
+  <script src="../extension/content.js"></script>
+</body>
+</html>
